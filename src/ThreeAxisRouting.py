@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 CNC Machining Interpreter
 Degrees of Freedom: 3(x, y, z)
@@ -7,7 +8,124 @@ Version: v1.0.0
 """
 
 import math
+import RPi.GPIO as GPIO
+import time
+import threading
 
+#Define pins on RPi
+xin1 = 17
+xin2 = 18
+xin3 = 27
+xin4 = 22
+yin1 = 6
+yin2 = 13
+yin3 = 19
+yin4 = 26
+
+#Define variables for X motor
+xstep_sleep = 0.002
+xstep_count = 4096
+xdirection = False #True for CW, False for CCW
+xstep_sequence = [[1,0,0,1],
+				[1,0,0,0],
+				[1,1,0,0],
+				[0,1,0,0],
+				[0,1,1,0],
+				[0,0,1,0],
+				[0,0,1,1],
+				[0,0,0,1]]
+
+#Define variables for Y motor
+ystep_sleep = 0.002
+ystep_count = 4096
+ydirection = False #True for CW, False for CCW
+ystep_sequence = [[1,0,0,1],
+				[1,0,0,0],
+				[1,1,0,0],
+				[0,1,0,0],
+				[0,1,1,0],
+				[0,0,1,0],
+				[0,0,1,1],
+				[0,0,0,1]]
+
+#Set up pin directions
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(xin1, GPIO.OUT)
+GPIO.setup(xin2,GPIO.OUT)
+GPIO.setup(xin3,GPIO.OUT)
+GPIO.setup(xin4,GPIO.OUT)
+GPIO.setup(yin1, GPIO.OUT)
+GPIO.setup(yin2,GPIO.OUT)
+GPIO.setup(yin3,GPIO.OUT)
+GPIO.setup(yin4,GPIO.OUT)
+
+#Default pin outputs
+GPIO.output(xin1, GPIO.LOW)
+GPIO.output(xin2,GPIO.LOW)
+GPIO.output(xin3,GPIO.LOW)
+GPIO.output(xin4,GPIO.LOW)
+GPIO.output(yin1, GPIO.LOW)
+GPIO.output(yin2,GPIO.LOW)
+GPIO.output(yin3,GPIO.LOW)
+GPIO.output(yin4,GPIO.LOW)
+
+#Define motors as an array of pins
+xmotor_pins = [xin1,xin2,xin3,xin4]
+ymotor_pins =[yin1,yin2,yin3,yin4]
+
+#Define stepper motor reset
+def cleanup():
+    GPIO.output(xin1, GPIO.LOW)
+    GPIO.output(xin2,GPIO.LOW)
+    GPIO.output(xin3,GPIO.LOW)
+    GPIO.output(xin4,GPIO.LOW)
+    GPIO.output(yin1, GPIO.LOW)
+    GPIO.output(yin2,GPIO.LOW)
+    GPIO.output(yin3,GPIO.LOW)
+    GPIO.output(yin4,GPIO.LOW)
+    GPIO.cleanup()
+
+#Run X motor
+def runXMotor():
+    try:
+        xmotor_step_counter = 0
+        i = 0
+        for i in range(xstep_count):
+            for pin in range(0, len(xmotor_pins)):
+                GPIO.output(xmotor_pins[pin], xstep_sequence[xmotor_step_counter][pin])
+            if xdirection == True:
+                xmotor_step_counter = (xmotor_step_counter - 1) % 8
+            elif xdirection == False:
+                xmotor_step_counter = (xmotor_step_counter + 1) % 8
+            else:
+                print("Unrecognized direction")
+                cleanup()
+            time.sleep(xstep_sleep)
+    except KeyboardInterrupt:
+        cleanup()
+        exit(1)
+
+#Run Y motor
+def runYMotor():
+    try:
+        ymotor_step_counter = 0
+        i = 0
+        for i in range(ystep_count):
+            for pin in range(0, len(ymotor_pins)):
+                GPIO.output(ymotor_pins[pin], ystep_sequence[ymotor_step_counter][pin])
+            if ydirection == True:
+                ymotor_step_counter = (ymotor_step_counter - 1) % 8
+            elif ydirection == False:
+                ymotor_step_counter = (ymotor_step_counter + 1) % 8
+            else:
+                print("Unrecognized direction")
+                cleanup()
+            time.sleep(ystep_sleep)
+    except KeyboardInterrupt:
+        cleanup()
+        exit(1)
+
+#Define global positioning and machining variables
 x = 0
 y = 0
 z = 0
@@ -19,7 +137,30 @@ spindle = 0
 feed = 0
 
 def calibrate():
-    return None
+    xdirection = True
+    runXMotor()
+    xdirection = False
+    runXMotor()
+    ydirection = True
+    runYMotor()
+    Ydirection = False
+    runYMotor()
+    xdirection = True
+    ydirection = True
+    xMove = threading.Thread(target=runXMotor, args = ())
+    yMove = threading.Thread(target=runYMotor, args = ())
+    xMove.start()
+    yMove.start()
+    xMove.join()
+    yMove.join()
+    xdirection = False
+    ydirection = False
+    xMove = threading.Thread(target=runXMotor, args = ())
+    yMove = threading.Thread(target=runYMotor, args = ())
+    xMove.start()
+    yMove.start()
+    xMove.join()
+    yMove.join()
 
 class Feed:
     def __init__(self):
@@ -64,13 +205,50 @@ class Feed:
         #Absolute
         if self.coord == "absolute":
             print("Traveling to", x, y, z)
+            if self.x < int(x):
+                xdirection = True
+            elif self.x > int(x):
+                xdirection = False
+            if self.y < int(y):
+                ydirection = True
+            elif self.y > int(y):
+                ydirection = False
+            xMove = threading.Thread(target=runXMotor, args = ())
+            yMove = threading.Thread(target=runYMotor, args = ())
+            xMove.start()
+            yMove.start()
+            xMove.join()
+            yMove.join()
+            self.x = x
+            self.y = y
+            self.z = z
             self.x = x
             self.y = y
             self.z = z
         elif self.coord == "relative":
             xyangle = math.tanh(y/x)
-    def G01(self, x1, y1, z1):
-        pass
+    def G01(self):
+        if self.coord == "absolute":
+            print("Traveling to", x, y, z)
+            if int(self.x) < int(x):
+                xdirection = True
+            elif int(self.x) > int(x):
+                xdirection = False
+            if int(self.y) < int(y):
+                ydirection = True
+            elif int(self.y) > int(y):
+                ydirection = False
+            xMove = threading.Thread(target=runXMotor, args = ())
+            yMove = threading.Thread(target=runYMotor, args = ())
+            xMove.start()
+            yMove.start()
+            xMove.join()
+            yMove.join()
+            self.x = x
+            self.y = y
+            self.z = z
+        elif self.coord == "relative":
+            xyangle = math.tanh(y/x)
 
     def G20(self):
         self.unit = "in"
@@ -83,7 +261,6 @@ class Feed:
 
     def G71(self):
         self.unit = "mm"
-
 
     #M Codes
     def M00(self):
@@ -135,6 +312,7 @@ def run(filename: str):
                         return "Error"
 
 #Debugging
+calibrate()
 feeder = Feed()
 f = open('test.nc')
 for line in f:
@@ -168,6 +346,3 @@ for line in f:
             print(decode[command])
             cmd = getattr(Feed, str(decode[command]))
             cmd(feeder)
-
-        
-        
